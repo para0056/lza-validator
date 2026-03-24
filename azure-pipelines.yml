@@ -1,0 +1,55 @@
+trigger: none
+
+parameters:
+  - name: lzaVersion
+    displayName: LZA Release Version (e.g. v1.14.2)
+    type: string
+    default: v1.14.2
+
+variables:
+  lzaVersion: ${{ parameters.lzaVersion }}
+  # Full ECR registry URI: <account-id>.dkr.ecr.<region>.amazonaws.com
+  ecrRegistry: 123456789012.dkr.ecr.ca-central-1.amazonaws.com
+  validatorImage: $(ecrRegistry)/lza-validator:$(lzaVersion)
+  # Path to your LZA config files within this repo (relative to repo root).
+  # Change this if your config files are in a subdirectory.
+  configPath: $(Build.SourcesDirectory)
+
+pool:
+  # Replace with the name of your self-hosted agent pool
+  name: Default
+
+steps:
+  - checkout: self
+    displayName: Checkout LZA config repo
+
+  - task: AWSShellScript@1
+    displayName: Authenticate to ECR
+    inputs:
+      # Replace with the name of your AWS service connection
+      awsCredentials: MyAWSServiceConnection
+      regionName: ca-central-1
+      scriptType: inline
+      inlineScript: |
+        aws ecr get-login-password \
+          | podman login --username AWS --password-stdin $(ecrRegistry)
+
+  - script: |
+      podman pull $(validatorImage)
+    displayName: Pull lza-validator image
+
+  - script: |
+      podman run --rm \
+        --volume $(configPath):/lza/config:z \
+        $(validatorImage)
+      # For LZA v1.7.0+ with SSM parameter lookups, add these flags above:
+      #   --env AWS_ACCESS_KEY_ID="$(AWS_ACCESS_KEY_ID)" \
+      #   --env AWS_SECRET_ACCESS_KEY="$(AWS_SECRET_ACCESS_KEY)" \
+      #   --env AWS_SESSION_TOKEN="$(AWS_SESSION_TOKEN)" \
+      # Store those values as secret pipeline variables or in a variable group.
+    displayName: Run LZA config validation
+
+  - script: |
+      podman rmi $(validatorImage) || true
+    displayName: Remove validator image
+    condition: always()
